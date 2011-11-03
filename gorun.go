@@ -108,6 +108,26 @@ func splitArgs() ([]string, []string) {
   return files, pargs
 }
 
+func call(command string, args ...string) bool {
+  c := append([]string{command}, args...)
+  p, err := os.StartProcess(
+      command,
+      c,
+      &os.ProcAttr{
+        "",
+        os.Envinron(),
+        []*os.File{nil, os.Stdout, os.Stderr},
+        nil})
+  if err != nil {
+    return false
+  }
+  s, err := p.Wait(0)
+  if err != nil {
+    return false
+  }
+  return s == 0
+}
+
 func buildLib(goroot, buildDir string, lib *lib) bool {
   fmt.Printf("Build Lib %s\n", lib.Name)
   return true
