@@ -30,8 +30,32 @@ func (l *lib) addFile(name string) {
   l.Files = append(l.Files, name)
 }
 
-func createBuild(files []string) ([]*lib, []string, os.Error) {
+func (l *lib) isMain() bool {
+  return l.Name == "main"
+}
+
+func flattenBuild(target *lib, libs map[string]*lib, seen map[string]bool, build []*lib) []*lib {
+  for name, _ := range target.Imports {
+    lib := libs[name]
+    if lib == nil {
+      continue
+    }
+    if _, ok := seen[lib.Name]; ok {
+      continue
+    }
+
+    for _, dep := range flattenBuild(lib, libs, seen, build) {
+      build = append(build, dep)
+    }
+  }
+
+  seen[target.Name] = true
+  return append(build, target)
+}
+
+func createBuild(files []string) ([]*lib, os.Error) {
   libs := make(map[string]*lib)
+
   // First build a map of libs.
   for i := 0; i < len(files); i++ {
     ast, err := parser.ParseFile(token.NewFileSet(),
@@ -39,7 +63,7 @@ func createBuild(files []string) ([]*lib, []string, os.Error) {
       nil,
       parser.PackageClauseOnly & parser.ImportsOnly)
     if err != nil {
-      return nil, nil, err
+      return nil, err
     }
 
     pkg := ast.Name.String()
@@ -60,11 +84,8 @@ func createBuild(files []string) ([]*lib, []string, os.Error) {
     }
   }
 
-  for _, v := range(libs) {
-    fmt.Println(v)
-  }
   // Next, flatten that map into a build list.
-  return nil, nil, nil
+  return flattenBuild(libs["main"], libs, make(map[string]bool), make([]*lib, 0)), nil
 }
 
 func splitArgs() ([]string, []string) {
@@ -87,6 +108,16 @@ func splitArgs() ([]string, []string) {
   return files, pargs
 }
 
+func buildLib(goroot, buildDir string, lib *lib) bool {
+  fmt.Printf("Build Lib %s\n", lib.Name)
+  return true
+}
+
+func buildApp(gooroot, buildDir string, lib *lib) bool {
+  fmt.Printf("Build App %s\n", lib.Name)
+  return true
+}
+
 func main() {
   flag.Parse()
   fmt.Printf("output:     %s\n", *output)
@@ -94,5 +125,13 @@ func main() {
   fmt.Printf("build-dir:  %s\n", *buildDir)
 
   files, _ := splitArgs()
-  createBuild(files)
+  libs, err := createBuild(files)
+  if err != nil {
+    panic(err)
+  }
+
+  for _, lib := range libs[:len(libs) - 1] {
+    buildLib(*goroot, *output, lib)
+  }
+  buildApp(*goroot, *output, libs[len(libs) - 1])
 }
