@@ -5,12 +5,27 @@ import (
   "fmt"
   "go/parser"
   "go/token"
+  "path/filepath"
   "os"
+  "syscall"
 )
 
-var output = flag.String("output", "main", "")
-var goroot = flag.String("goroot", "/Users/knorton/src/go", "")
+// TODO:
+// 1 - Comment some of this code.
+// 2 - Add checks of unnecessary builds.
+// 3 - Add meta-data file format.
+var output = flag.String("output", "", "")
+var goroot = flag.String("goroot", defaultGoRoot(), "")
 var buildDir = flag.String("build-dir", "out", "")
+
+func defaultGoRoot() string {
+  env := os.Getenv("GOROOT")
+  if env != "" {
+    return env
+  }
+
+  return fmt.Sprintf("%s/src/go", os.Getenv("HOME"))
+}
 
 type lib struct {
   Name string
@@ -43,10 +58,7 @@ func flattenBuild(target *lib, libs map[string]*lib, seen map[string]bool, build
     if _, ok := seen[lib.Name]; ok {
       continue
     }
-
-    for _, dep := range flattenBuild(lib, libs, seen, build) {
-      build = append(build, dep)
-    }
+    build = append(build, flattenBuild(lib, libs, seen, build)...)
   }
 
   seen[target.Name] = true
@@ -85,7 +97,7 @@ func createBuild(files []string) ([]*lib, os.Error) {
   }
 
   // Next, flatten that map into a build list.
-  return flattenBuild(libs["main"], libs, make(map[string]bool), make([]*lib, 0)), nil
+  return flattenBuild(libs["main"], libs, map[string]bool{}, []*lib{}), nil
 }
 
 func splitArgs() ([]string, []string) {
@@ -115,7 +127,7 @@ func call(command string, args ...string) bool {
       c,
       &os.ProcAttr{
         "",
-        os.Envinron(),
+        os.Environ(),
         []*os.File{nil, os.Stdout, os.Stderr},
         nil})
   if err != nil {
@@ -125,33 +137,76 @@ func call(command string, args ...string) bool {
   if err != nil {
     return false
   }
-  return s == 0
+  return s.WaitStatus.ExitStatus() == 0
 }
 
 func buildLib(goroot, buildDir string, lib *lib) bool {
-  fmt.Printf("Build Lib %s\n", lib.Name)
+  out6 := filepath.Join(buildDir, fmt.Sprintf("%s.6", lib.Name))
+  args := []string{fmt.Sprintf("-I%s", buildDir), "-o", out6}
+  if !call(filepath.Join(goroot, "bin/6g"), append(args, lib.Files...)...) {
+    return false
+  }
+
+  outa := filepath.Join(buildDir, fmt.Sprintf("%s.a", lib.Name))
+  if !call(filepath.Join(goroot, "bin/gopack"), "grc", outa, out6) {
+    return false
+  }
+
   return true
 }
 
-func buildApp(gooroot, buildDir string, lib *lib) bool {
-  fmt.Printf("Build App %s\n", lib.Name)
+func buildApp(goroot, buildDir string, lib *lib, output string) bool {
+  out6 := filepath.Join(buildDir, fmt.Sprintf("%s.6", lib.Name))
+  args := []string{fmt.Sprintf("-I%s", buildDir), "-o", out6}
+  if !call(filepath.Join(goroot, "bin/6g"),
+      append(args, lib.Files...)...) {
+    return false
+  }
+
+  if !call(filepath.Join(goroot, "bin/6l"),
+      fmt.Sprintf("-L%s", buildDir),
+      "-o",
+      output,
+      out6) {
+    return false
+  }
+
   return true
+}
+
+func outputTo(flag string, buildDir string, lib *lib) string {
+  if flag != "" {
+    return flag
+  }
+  return filepath.Join(buildDir, lib.Name)
 }
 
 func main() {
   flag.Parse()
-  fmt.Printf("output:     %s\n", *output)
-  fmt.Printf("groot:      %s\n", *goroot)
-  fmt.Printf("build-dir:  %s\n", *buildDir)
 
-  files, _ := splitArgs()
+  files, args := splitArgs()
   libs, err := createBuild(files)
   if err != nil {
     panic(err)
   }
 
+  // Ensure that buildDir exits.
+  os.MkdirAll(*buildDir, 0755)
+
+  // Build all lib dependencies.
   for _, lib := range libs[:len(libs) - 1] {
-    buildLib(*goroot, *output, lib)
+    if !buildLib(*goroot, *buildDir, lib) {
+      os.Exit(1)
+    }
   }
-  buildApp(*goroot, *output, libs[len(libs) - 1])
+
+  // Build the main binary.
+  main := libs[len(libs) - 1]
+  dest := outputTo(*output, *buildDir, main)
+  if !buildApp(*goroot, *buildDir, main, dest) {
+    os.Exit(1)
+  }
+
+  // Execute the main binary.
+  syscall.Exec(dest, args, os.Environ())
 }
