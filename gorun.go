@@ -7,7 +7,6 @@ import (
   "go/token"
   "path/filepath"
   "os"
-  "syscall"
 )
 
 // TODO:
@@ -208,5 +207,7 @@ func main() {
   }
 
   // Execute the main binary.
-  syscall.Exec(dest, args, os.Environ())
+  if !call(dest, args...) {
+    os.Exit(1)
+  }
 }
