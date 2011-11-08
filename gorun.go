@@ -13,9 +13,6 @@ import (
 // 1 - Comment some of this code.
 // 2 - Add checks of unnecessary builds.
 // 3 - Add meta-data file format.
-var output = flag.String("output", "", "")
-var goroot = flag.String("goroot", defaultGoRoot(), "")
-var buildDir = flag.String("build-dir", "out", "")
 
 func defaultGoRoot() string {
   env := os.Getenv("GOROOT")
@@ -64,7 +61,7 @@ func flattenBuild(target *lib, libs map[string]*lib, seen map[string]bool, build
   return append(build, target)
 }
 
-func createBuild(files []string) ([]*lib, os.Error) {
+func createBuild(files []string) ([]*lib, error) {
   libs := make(map[string]*lib)
 
   // First build a map of libs.
@@ -100,23 +97,13 @@ func createBuild(files []string) ([]*lib, os.Error) {
 }
 
 func splitArgs() ([]string, []string) {
-  files := make([]string, 0)
-  pargs := make([]string, 0)
-  i := 0
-  for ; i < flag.NArg(); i++ {
-    arg := flag.Arg(i)
-    if flag.Arg(i) == "--" {
-      i++
-      break
+  args := os.Args
+  for i := 0; i < len(args); i++ {
+    if args[i] == "--" {
+      return args[1:i], args[i + 1:]
     }
-    files = append(files, arg)
   }
-
-  for ; i < flag.NArg(); i++ {
-    pargs = append(pargs, flag.Arg(i))
-  }
-
-  return files, pargs
+  return args[1:], args[len(args):]
 }
 
 func call(command string, args ...string) bool {
@@ -180,34 +167,47 @@ func outputTo(flag string, buildDir string, lib *lib) string {
   return filepath.Join(buildDir, lib.Name)
 }
 
-func main() {
-  flag.Parse()
+func argsFromFlags(flags *flag.FlagSet) []string {
+  args := make([]string, 0)
+  for i := 0; i < flags.NArg(); i++ {
+    args = append(args, flags.Arg(i))
+  }
+  return args
+}
 
-  files, args := splitArgs()
-  libs, err := createBuild(files)
+func main() {
+  var flags = flag.NewFlagSet("", flag.ContinueOnError)
+  flagOutput := flags.String("output", "", "")
+  flagGoroot := flags.String("goroot", defaultGoRoot(), "")
+  flagBuildDir := flags.String("build-dir", "out", "")
+
+  gargs, pargs := splitArgs()
+  flags.Parse(gargs)
+
+  libs, err := createBuild(argsFromFlags(flags))
   if err != nil {
     panic(err)
   }
 
   // Ensure that buildDir exits.
-  os.MkdirAll(*buildDir, 0755)
+  os.MkdirAll(*flagBuildDir, 0755)
 
   // Build all lib dependencies.
   for _, lib := range libs[:len(libs) - 1] {
-    if !buildLib(*goroot, *buildDir, lib) {
+    if !buildLib(*flagGoroot, *flagBuildDir, lib) {
       os.Exit(1)
     }
   }
 
   // Build the main binary.
   main := libs[len(libs) - 1]
-  dest := outputTo(*output, *buildDir, main)
-  if !buildApp(*goroot, *buildDir, main, dest) {
+  dest := outputTo(*flagOutput, *flagBuildDir, main)
+  if !buildApp(*flagGoroot, *flagBuildDir, main, dest) {
     os.Exit(1)
   }
 
   // Execute the main binary.
-  if !call(dest, args...) {
+  if !call(dest, pargs...) {
     os.Exit(1)
   }
 }
