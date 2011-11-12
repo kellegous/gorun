@@ -18,10 +18,27 @@ def Test(here, goroot, builddir):
         '--build-dir=%s' % os.path.abspath(os.path.join(builddir, 'tests', name))
       ] + args, cwd = testdir, stdout = subprocess.PIPE)
     out, err = p.communicate()
-    return p.returncode == 0
+    return (p.returncode == 0, out, err)
+  def Result(wasGood):
+    if wasGood:
+      return ";-)"
+    return ":-("
+  failing = []
   for name, args, shouldPass in LoadTests():
-    didPass = Run(name, os.path.join(here, 'tests'), builddir, args.split(' '))
-    print "%s | %s" % (name.ljust(30), shouldPass == didPass)
+    didPass, out, err = Run(name,
+        os.path.join(here, 'tests'),
+        builddir,
+        args.split(' '))
+    if shouldPass != didPass:
+      failing.append((name, shouldPass, out, err))
+    print "%s%s" % (name.ljust(30), Result(shouldPass == didPass))
+  for name, shouldPass, out, err in failing:
+    print "\n%s failed with output" % name
+    if out is not None and len(out) > 0:
+      print "STDOUT\n%s" % out
+    if err is not None and len(err) > 0:
+      print "STDERR\n%s" % err
+  return len(failing) == 0
 
 def Build(here, goroot, builddir):
   if not os.path.exists(builddir):
