@@ -194,6 +194,17 @@ const (
 func parseArgs() (*options, error) {
   args, pargs := splitArgs()
 
+  // Special case for --help and -h
+  if args[0] == "--help" || args[0] == "-h" {
+    fmt.Printf("Usage: gorun [options] file... [--- args...]\n")
+    fmt.Printf("Options:\n")
+    fmt.Printf("  --output=<file>       executable output to file\n")
+    fmt.Printf("  --build-dir=<dir>     directory to write artifacts\n")
+    fmt.Printf("  --goroot=<dir>        path to $GOROOT\n")
+    fmt.Printf("  --alias=<pkg>:<alias> renames package so that it can be imported by alias\n")
+    os.Exit(0)
+  }
+
   output := ""
   buildDir := "out"
   goroot := defaultGoRoot()

@@ -1,5 +1,9 @@
 package main
-import "foo/c"
+import (
+  "foo/y" // b
+  "foo/z" // c
+)
 func main() {
   b.Main()
+  c.Main()
 }
