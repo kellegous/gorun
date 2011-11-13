@@ -1,12 +1,13 @@
 package main
 
 import (
-  "flag"
+  "errors"
   "fmt"
   "go/parser"
   "go/token"
   "path/filepath"
   "os"
+  "strings"
 )
 
 // TODO:
@@ -25,12 +26,13 @@ func defaultGoRoot() string {
 
 type lib struct {
   Name string
+  Alias string
   Files []string
   Imports map[string]bool
 }
 
-func newLib(name string) *lib {
-  return &lib{name, make([]string, 0), make(map[string]bool)}
+func newLib(name, alias string) *lib {
+  return &lib{name, alias, make([]string, 0), make(map[string]bool)}
 }
 
 func (l *lib) addImport(path string) {
@@ -61,7 +63,7 @@ func flattenBuild(target *lib, libs map[string]*lib, seen map[string]bool, build
   return append(build, target)
 }
 
-func createBuild(files []string) ([]*lib, error) {
+func createBuild(files []string, aliases map[string]string) ([]*lib, error) {
   libs := make(map[string]*lib)
 
   // First build a map of libs.
@@ -75,20 +77,22 @@ func createBuild(files []string) ([]*lib, error) {
     }
 
     pkg := ast.Name.String()
-    if pkg == "main" {
+    alias, ok := aliases[pkg]
+    if !ok {
+      alias = pkg
     }
 
-    lib := libs[pkg]
+    lib := libs[alias]
     if lib == nil {
-      lib = newLib(pkg)
-      libs[pkg] = lib
+      lib = newLib(pkg, alias)
+      libs[alias] = lib
     }
 
     lib.addFile(files[i])
     imports := ast.Imports
-    for j := 0; j < len(imports); j++ {
-      path := imports[j].Path.Value
-      lib.addImport(path[1 : len(path) - 1])
+    for _, path := range imports {
+      v := path.Path.Value
+      lib.addImport(v[1 : len(v) - 1])
     }
   }
 
@@ -127,13 +131,17 @@ func call(command string, args ...string) bool {
 }
 
 func buildLib(goroot, buildDir string, lib *lib) bool {
-  out6 := filepath.Join(buildDir, fmt.Sprintf("%s.6", lib.Name))
+  out6 := filepath.Join(buildDir, fmt.Sprintf("%s.6", lib.Alias))
+
+  dirname, _ := filepath.Split(out6)
+  os.MkdirAll(dirname, 0700)
+
   args := []string{fmt.Sprintf("-I%s", buildDir), "-o", out6}
   if !call(filepath.Join(goroot, "bin/6g"), append(args, lib.Files...)...) {
     return false
   }
 
-  outa := filepath.Join(buildDir, fmt.Sprintf("%s.a", lib.Name))
+  outa := filepath.Join(buildDir, fmt.Sprintf("%s.a", lib.Alias))
   if !call(filepath.Join(goroot, "bin/gopack"), "grc", outa, out6) {
     return false
   }
@@ -167,47 +175,110 @@ func outputTo(flag string, buildDir string, lib *lib) string {
   return filepath.Join(buildDir, lib.Name)
 }
 
-func argsFromFlags(flags *flag.FlagSet) []string {
-  args := make([]string, 0)
-  for i := 0; i < flags.NArg(); i++ {
-    args = append(args, flags.Arg(i))
+type options struct {
+  Files []string
+  Output string
+  GoRoot string
+  BuildDir string
+  Aliases map[string]string
+  ProgramArgs []string
+}
+
+const (
+  outputFlagPrefix = "--output="
+  buildDirFlagPrefix = "--build-dir="
+  gorootFlagPrefix = "--goroot="
+  aliasFlagPrefix = "--alias="
+)
+
+func parseArgs() (*options, error) {
+  args, pargs := splitArgs()
+
+  output := ""
+  buildDir := "out"
+  goroot := defaultGoRoot()
+  aliases := map[string]string{}
+
+  i := 0
+  for ; i < len(args); i++ {
+    arg := args[i]
+
+    // If this doesn't look like a flag, proceed.
+    if arg[0] != '-' && arg[1] != '-' {
+      break
+    }
+
+    // --output
+    if strings.HasPrefix(arg, outputFlagPrefix) {
+      output = arg[len(outputFlagPrefix):]
+      continue
+    }
+
+    // --build-dir
+    if strings.HasPrefix(arg, buildDirFlagPrefix) {
+      buildDir = arg[len(buildDirFlagPrefix):]
+      continue
+    }
+
+    // --goroot
+    if strings.HasPrefix(arg, gorootFlagPrefix) {
+      goroot = arg[len(gorootFlagPrefix):]
+      continue
+    }
+
+    // --alias
+    if strings.HasPrefix(arg, aliasFlagPrefix) {
+      vals := strings.SplitN(arg[len(aliasFlagPrefix):], ":", 2)
+      if len(vals) != 2 {
+        return nil, errors.New(fmt.Sprintf("Invalid flag: %s", arg))
+      }
+      aliases[vals[0]] = vals[1]
+      continue
+    }
+
+    return nil, errors.New(fmt.Sprintf("Invalid flag: %s", arg))
   }
-  return args
+
+  return &options{
+    args[i : len(args)],
+    output,
+    goroot,
+    buildDir,
+    aliases,
+    pargs}, nil
 }
 
 func main() {
-  var flags = flag.NewFlagSet("", flag.ContinueOnError)
-  flagOutput := flags.String("output", "", "")
-  flagGoroot := flags.String("goroot", defaultGoRoot(), "")
-  flagBuildDir := flags.String("build-dir", "out", "")
+  options, err := parseArgs()
+  if err != nil {
+    // todo: fix this
+    panic(err)
+  }
 
-  gargs, pargs := splitArgs()
-  flags.Parse(gargs)
-
-  libs, err := createBuild(argsFromFlags(flags))
+  libs, err := createBuild(options.Files, options.Aliases)
   if err != nil {
     panic(err)
   }
 
   // Ensure that buildDir exits.
-  os.MkdirAll(*flagBuildDir, 0755)
+  os.MkdirAll(options.BuildDir, 0755)
 
   // Build all lib dependencies.
   for _, lib := range libs[:len(libs) - 1] {
-    if !buildLib(*flagGoroot, *flagBuildDir, lib) {
+    if !buildLib(options.GoRoot, options.BuildDir, lib) {
       os.Exit(1)
     }
   }
 
   // Build the main binary.
   main := libs[len(libs) - 1]
-  dest := outputTo(*flagOutput, *flagBuildDir, main)
-  if !buildApp(*flagGoroot, *flagBuildDir, main, dest) {
+  dest := outputTo(options.Output, options.BuildDir, main)
+  if !buildApp(options.GoRoot, options.BuildDir, main, dest) {
     os.Exit(1)
   }
 
   // Execute the main binary.
-  if !call(dest, pargs...) {
+  if !call(dest, options.ProgramArgs...) {
     os.Exit(1)
   }
 }

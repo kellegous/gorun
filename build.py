@@ -16,12 +16,12 @@ def Test(here, goroot, builddir):
     p = subprocess.Popen([
         os.path.abspath(os.path.join(builddir, 'gorun')),
         '--build-dir=%s' % os.path.abspath(os.path.join(builddir, 'tests', name))
-      ] + args, cwd = testdir, stdout = subprocess.PIPE)
+      ] + args, cwd = testdir, stdout = subprocess.PIPE, stderr = subprocess.PIPE)
     out, err = p.communicate()
     return (p.returncode == 0, out, err)
   def Result(wasGood):
     if wasGood:
-      return ";-)"
+      return ":-)"
     return ":-("
   failing = []
   for name, args, shouldPass in LoadTests():

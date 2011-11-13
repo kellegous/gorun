@@ -1,3 +1,4 @@
 +simple     : simple.go
 +args       : args.go -- --arg0 -arg1 2
 +lib        : liba.go libb.go
++alias      : --alias=b:foo/c aliasa.go aliasb.go
